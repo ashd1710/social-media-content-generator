@@ -1,7 +1,7 @@
 # 🚀 Social Media Content Generator
 ## Powered by Perplexity Sonar API
 
-[![Demo Video](https://img.shields.io/badge/▶️_Demo-YouTube-red)](YOUR_VIDEO_LINK_HERE)
+[![Demo Video](https://img.shields.io/badge/▶️_Demo-YouTube-r)](]https://youtu.be/JRp7JAR7ifo)
 [![Perplexity API](https://img.shields.io/badge/Powered_by-Perplexity_Sonar-blue)](https://www.perplexity.ai)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
@@ -245,7 +245,7 @@ social-media-content-generator/
 
 ## 🎬 **Demo Video**
 
-[![Demo Thumbnail](https://img.shields.io/badge/▶️_Watch_Demo-3_minutes-red?style=for-the-badge)](YOUR_VIDEO_LINK_HERE)
+[![Demo Thumbnail](https://img.shields.io/badge/▶️_Watch_Demo-3_minutes-red?style=for-the-badge)](https://youtu.be/JRp7JAR7ifo)
 
 **Demo Highlights:**
 - Live content generation with real-time research
@@ -296,7 +296,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🔗 **Links**
 
 - **[Perplexity AI](https://www.perplexity.ai/)** - Powering our content generation
-- **[Demo Video](YOUR_VIDEO_LINK_HERE)** - 3-minute demonstration
+- **[Demo Video](https://youtu.be/JRp7JAR7ifo)** - 3-minute demonstration
 - **[Documentation](docs/)** - Comprehensive guides and API details
 - **[Issues](https://github.com/ashd1710/social-media-content-generator/issues)** - Bug reports and feature requests
 
@@ -314,7 +314,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ### **Ready to revolutionize your social media content strategy?**
 
-**[🚀 Get Started](#-quick-start) • [📖 Read the Docs](docs/) • [🎬 Watch Demo](YOUR_VIDEO_LINK_HERE)**
+**[🚀 Get Started](#-quick-start) • [📖 Read the Docs](docs/) • [🎬 Watch Demo](https://youtu.be/JRp7JAR7ifo)**
 
 *Built with ❤️ for the Perplexity Global Hackathon 2025*
 
