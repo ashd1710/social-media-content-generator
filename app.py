@@ -6,73 +6,13 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import time
-import hashlib
 
-# Import your custom modules (with error handling)
-try:
-    from src.perplexity_client import PerplexityClient
-except ImportError:
-    st.error("Missing src/perplexity_client.py - Please check your repository structure")
-    st.stop()
-
-try:
-    from src.content_formatter import ContentFormatter
-except ImportError:
-    # Create a minimal content formatter if missing
-    class ContentFormatter:
-        @staticmethod
-        def format_content(content, platform):
-            return content
-
-try:
-    from src.social_integrations import SocialMediaManager
-except ImportError:
-    # Create a minimal social media manager if missing
-    class SocialMediaManager:
-        def __init__(self):
-            self.platforms = {}
-        
-        def get_platform(self, platform_name):
-            return None
-        
-        def get_connected_platforms(self):
-            return []
-        
-        def save_connections(self):
-            pass
-
-# Mock database class since it's not essential for demo
-class ContentDatabase:
-    def __init__(self):
-        pass
-    
-    def store_content(self, topic, platform, content, metadata=None):
-        # Mock storage - just log the action
-        if 'content_history' not in st.session_state:
-            st.session_state.content_history = []
-        
-        st.session_state.content_history.append({
-            'topic': topic,
-            'platform': platform,
-            'content': content[:100] + "...",  # Store first 100 chars
-            'timestamp': datetime.now(),
-            'metadata': metadata or {}
-        })
-
-# Utility functions
-def get_platform_info(platform):
-    """Get platform-specific information"""
-    platform_info = {
-        'linkedin': {'icon': '💼', 'char_limit': 1300},
-        'twitter': {'icon': '🐦', 'char_limit': 280},
-        'bluesky': {'icon': '🦋', 'char_limit': 300},
-        'threads': {'icon': '🧵', 'char_limit': 500}
-    }
-    return platform_info.get(platform, {'icon': '📱', 'char_limit': 280})
-
-def generate_content_hash(content):
-    """Generate hash for content"""
-    return hashlib.md5(content.encode()).hexdigest()[:8]
+# Import your custom modules
+from src.perplexity_client import PerplexityClient
+from src.content_formatter import ContentFormatter
+from src.social_integrations import SocialMediaManager, display_platform_connection_ui
+from src.database import ContentDatabase
+from src.utils import get_platform_info, generate_content_hash
 
 # Page config
 st.set_page_config(
@@ -100,12 +40,21 @@ st.markdown("""
         border-left: 4px solid #667eea;
         margin: 1rem 0;
     }
-    .success-message {
-        background: #d4edda;
-        color: #155724;
-        padding: 1rem;
-        border-radius: 5px;
-        border: 1px solid #c3e6cb;
+    .content-card {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 10px;
+        border: 1px solid #e0e0e0;
+        margin: 1rem 0;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .platform-badge {
+        display: inline-block;
+        padding: 0.25rem 0.5rem;
+        border-radius: 15px;
+        font-size: 0.8rem;
+        font-weight: bold;
+        margin: 0.25rem;
     }
     .stButton > button {
         background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
@@ -114,6 +63,11 @@ st.markdown("""
         border-radius: 5px;
         padding: 0.5rem 1rem;
         font-weight: bold;
+        transition: all 0.3s;
+    }
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
     }
 </style>
 """, unsafe_allow_html=True)
@@ -130,10 +84,10 @@ def get_api_key_input():
     
     try:
         if hasattr(st, 'secrets') and 'PERPLEXITY_API_KEY' in st.secrets:
-            default_key = "Using configured key"
+            default_key = "✅ Configured"
             has_configured_key = True
         elif os.getenv('PERPLEXITY_API_KEY'):
-            default_key = "Using configured key"
+            default_key = "✅ Configured"
             has_configured_key = True
     except:
         pass
@@ -142,7 +96,7 @@ def get_api_key_input():
     user_api_key = st.sidebar.text_input(
         "Perplexity API Key",
         value=default_key if default_key else "",
-        type="password",
+        type="password" if not has_configured_key else "default",
         help="Enter your Perplexity API key. Get one free at perplexity.ai",
         placeholder="pplx-your-api-key-here"
     )
@@ -153,15 +107,15 @@ def get_api_key_input():
         **🔑 Get your free API key:**
         1. Visit [perplexity.ai](https://perplexity.ai)
         2. Sign up/login
-        3. Go to API section  
+        3. Go to API settings
         4. Generate new API key
         5. Copy and paste it above
         """)
         
-        st.sidebar.info("💡 Your API key is only used for your session and not stored anywhere.")
+        st.sidebar.info("💡 Your API key is only used for your session and not stored.")
     
     # Return the appropriate API key
-    if user_api_key and user_api_key != "Using configured key":
+    if user_api_key and user_api_key not in ["✅ Configured", ""]:
         return user_api_key
     elif has_configured_key:
         try:
@@ -198,6 +152,10 @@ def initialize_session_state():
         st.session_state.social_manager = SocialMediaManager()
     if 'db' not in st.session_state:
         st.session_state.db = ContentDatabase()
+    if 'current_topic' not in st.session_state:
+        st.session_state.current_topic = ""
+    if 'current_content_type' not in st.session_state:
+        st.session_state.current_content_type = ""
 
 def show_header():
     """Display main header"""
@@ -208,37 +166,59 @@ def show_header():
     </div>
     """, unsafe_allow_html=True)
 
-def content_generation_page(perplexity_client):
-    """Main content generation interface"""
+def generate_content_page():
+    """Main content generation page"""
     
     st.header("📝 Generate Content")
     
-    # Topic and content type selection
+    # Initialize Perplexity client
+    perplexity_client = initialize_perplexity_client()
+    
+    if not perplexity_client:
+        st.error("🔑 Please configure your Perplexity API key in the sidebar to generate content.")
+        return
+    
+    # Content generation interface
     col1, col2 = st.columns(2)
     
     with col1:
         # Topic selection
+        st.subheader("📊 Select Topic")
         topic_options = [
             "AI Trends", "Product Management", "Financial Markets", 
             "Personal Finance", "Healthcare AI", "Climate Tech",
             "Startup Ecosystem", "Digital Marketing", "Custom Topic"
         ]
         
-        selected_topic = st.selectbox("📊 Select Topic", topic_options)
+        selected_topic = st.selectbox("Choose a topic:", topic_options, key="topic_select")
         
         if selected_topic == "Custom Topic":
-            custom_topic = st.text_input("Enter your custom topic:")
+            custom_topic = st.text_input("Enter your custom topic:", key="custom_topic_input")
             topic = custom_topic if custom_topic else "AI Trends"
         else:
             topic = selected_topic
+        
+        st.session_state.current_topic = topic
     
     with col2:
         # Content type selection
+        st.subheader("📑 Content Type")
         content_types = [
-            "Trend Analysis", "News Summary", "Educational Tip", 
-            "Opinion Piece", "Industry Insight", "How-to Guide"
+            "trend_analysis", "news_summary", "tip", "opinion"
         ]
-        content_type = st.selectbox("📑 Content Type", content_types)
+        content_type_labels = [
+            "Trend Analysis", "News Summary", "Educational Tip", "Opinion Piece"
+        ]
+        
+        content_type_index = st.selectbox(
+            "Choose content type:", 
+            range(len(content_type_labels)),
+            format_func=lambda x: content_type_labels[x],
+            key="content_type_select"
+        )
+        
+        content_type = content_types[content_type_index]
+        st.session_state.current_content_type = content_type_labels[content_type_index]
     
     # Platform selection
     st.subheader("🎯 Target Platforms")
@@ -246,105 +226,135 @@ def content_generation_page(perplexity_client):
     
     platforms = {}
     with platform_cols[0]:
-        platforms['linkedin'] = st.checkbox("💼 LinkedIn", value=True)
+        platforms['linkedin'] = st.checkbox("💼 LinkedIn", value=True, key="linkedin_check")
     with platform_cols[1]:
-        platforms['bluesky'] = st.checkbox("🦋 Bluesky", value=True)
+        platforms['bluesky'] = st.checkbox("🦋 Bluesky", value=True, key="bluesky_check")
     with platform_cols[2]:
-        platforms['twitter'] = st.checkbox("🐦 Twitter/X")
+        platforms['twitter'] = st.checkbox("🐦 Twitter/X", key="twitter_check")
     with platform_cols[3]:
-        platforms['threads'] = st.checkbox("🧵 Threads")
+        platforms['threads'] = st.checkbox("🧵 Threads", key="threads_check")
     
     selected_platforms = [p for p, selected in platforms.items() if selected]
     
     # Generate content button
-    if st.button("🚀 Generate Content", type="primary"):
+    if st.button("🚀 Generate Content", type="primary", key="generate_btn"):
         if not selected_platforms:
             st.error("Please select at least one platform.")
             return
         
-        with st.spinner("🔍 Researching and generating content..."):
-            try:
-                generated_content = {}
-                progress_bar = st.progress(0)
+        generate_content_for_platforms(perplexity_client, topic, content_type, selected_platforms)
+    
+    # Display generated content if available
+    if st.session_state.generated_content:
+        display_generated_content()
+
+def generate_content_for_platforms(perplexity_client, topic, content_type, platforms):
+    """Generate content for selected platforms"""
+    
+    with st.spinner("🔍 Researching and generating content with Perplexity Sonar..."):
+        try:
+            generated_content = {}
+            progress_bar = st.progress(0)
+            
+            for i, platform in enumerate(platforms):
+                # Update progress
+                progress_bar.progress((i + 1) / len(platforms))
                 
-                for i, platform in enumerate(selected_platforms):
-                    # Update progress
-                    progress_bar.progress((i + 1) / len(selected_platforms))
+                # Generate content for each platform
+                st.write(f"🔍 Generating {platform} content...")
+                
+                response = perplexity_client.generate_content(
+                    topic=topic,
+                    content_type=content_type,
+                    platform=platform
+                )
+                
+                if response and 'choices' in response:
+                    content = response['choices'][0]['message']['content']
+                    generated_content[platform] = content
                     
-                    # Generate content for each platform
-                    response = perplexity_client.generate_content(
+                    # Store in database
+                    st.session_state.db.store_content(
                         topic=topic,
-                        content_type=content_type.lower().replace(" ", "_"),
-                        platform=platform
+                        platform=platform,
+                        content=content,
+                        metadata={'content_type': content_type}
                     )
                     
-                    if response and 'choices' in response:
-                        content = response['choices'][0]['message']['content']
-                        generated_content[platform] = content
-                        
-                        # Store in database
-                        st.session_state.db.store_content(
-                            topic=topic,
-                            platform=platform,
-                            content=content,
-                            metadata={'content_type': content_type}
-                        )
-                
-                progress_bar.progress(1.0)
-                st.session_state.generated_content = generated_content
-                
-                # Success message
-                st.success(f"✅ Generated content for {len(generated_content)} platforms!")
-                
-                # Show generated content
-                display_generated_content(generated_content)
-                
-            except Exception as e:
-                st.error(f"❌ Error generating content: {str(e)}")
+                    st.success(f"✅ {platform.title()} content generated!")
+                else:
+                    st.error(f"❌ Failed to generate content for {platform}")
+            
+            progress_bar.progress(1.0)
+            st.session_state.generated_content = generated_content
+            
+            # Success message
+            st.success(f"🎉 Generated content for {len(generated_content)} platforms!")
+            
+        except Exception as e:
+            st.error(f"❌ Error generating content: {str(e)}")
 
-def display_generated_content(content_dict):
+def display_generated_content():
     """Display generated content with platform-specific formatting"""
     
     st.subheader("📋 Generated Content")
     
+    if not st.session_state.generated_content:
+        return
+    
     # Create tabs for each platform
-    if content_dict:
-        tabs = st.tabs([platform.title() for platform in content_dict.keys()])
-        
-        for i, (platform, content) in enumerate(content_dict.items()):
-            with tabs[i]:
-                platform_info = get_platform_info(platform)
-                
-                # Platform header
-                st.markdown(f"### {platform_info['icon']} {platform.title()}")
-                st.markdown(f"**Character Limit:** {platform_info['char_limit']} characters")
-                
-                # Content display
-                st.text_area(
-                    f"{platform.title()} Content",
-                    value=content,
-                    height=200,
-                    key=f"content_{platform}",
-                    help=f"Content optimized for {platform}"
-                )
-                
-                # Character count
+    tabs = st.tabs([platform.title() for platform in st.session_state.generated_content.keys()])
+    
+    for i, (platform, content) in enumerate(st.session_state.generated_content.items()):
+        with tabs[i]:
+            platform_info = get_platform_info(platform)
+            
+            # Platform header
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.markdown(f"### {platform_info['icon']} {platform_info['name']}")
+            with col2:
                 char_count = len(content)
                 if char_count <= platform_info['char_limit']:
-                    st.success(f"✅ {char_count}/{platform_info['char_limit']} characters")
+                    st.success(f"✅ {char_count}/{platform_info['char_limit']}")
                 else:
-                    st.warning(f"⚠️ {char_count}/{platform_info['char_limit']} characters (over limit)")
-                
-                # Refinement section
-                st.markdown("#### 🔧 Refine Content")
+                    st.warning(f"⚠️ {char_count}/{platform_info['char_limit']}")
+            
+            # Content display
+            st.text_area(
+                f"{platform_info['name']} Content",
+                value=content,
+                height=200,
+                key=f"content_display_{platform}",
+                help=f"Content optimized for {platform_info['name']}"
+            )
+            
+            # Refinement section
+            st.markdown("#### 🔧 Refine Content")
+            
+            col1, col2 = st.columns([3, 1])
+            with col1:
                 refinement_prompt = st.text_input(
                     "How would you like to improve this content?",
                     placeholder="Make it more engaging, add statistics, simplify language...",
-                    key=f"refinement_{platform}"
+                    key=f"refinement_input_{platform}"
                 )
-                
-                if st.button(f"✨ Refine {platform.title()} Content", key=f"refine_{platform}"):
+            with col2:
+                if st.button(f"✨ Refine", key=f"refine_btn_{platform}"):
                     refine_content(platform, refinement_prompt)
+            
+            # Quick suggestions
+            st.markdown("**Quick suggestions:**")
+            suggestion_cols = st.columns(3)
+            with suggestion_cols[0]:
+                if st.button("🎯 Make more engaging", key=f"engaging_{platform}"):
+                    refine_content(platform, "Make this content more engaging and compelling")
+            with suggestion_cols[1]:
+                if st.button("📊 Add statistics", key=f"stats_{platform}"):
+                    refine_content(platform, "Add relevant statistics and data points")
+            with suggestion_cols[2]:
+                if st.button("🎨 Improve formatting", key=f"format_{platform}"):
+                    refine_content(platform, "Improve formatting and readability")
 
 def refine_content(platform, refinement_prompt):
     """Refine content based on user feedback"""
@@ -363,122 +373,184 @@ def refine_content(platform, refinement_prompt):
         try:
             # Create refinement prompt
             refinement_request = f"""
-            Please refine this {platform} content based on the user's request: "{refinement_prompt}"
-            
-            Current content:
+            Current {platform} content:
             {current_content}
             
-            Keep the content optimized for {platform} platform requirements.
+            User request: {refinement_prompt}
+            
+            Please refine the above content based on the user's request while keeping it optimized for {platform}.
             """
             
-            # For demo purposes, simulate refinement since we might not have full client
-            st.success("✅ Content refinement feature available with full API integration!")
-            st.info("💡 This demo shows the refinement interface. Full functionality requires complete module setup.")
+            # Generate refined content
+            response = perplexity_client.generate_content(
+                topic=f"Content refinement: {refinement_prompt}",
+                content_type="refinement",
+                platform=platform
+            )
+            
+            if response and 'choices' in response:
+                refined_content = response['choices'][0]['message']['content']
+                st.session_state.generated_content[platform] = refined_content
+                st.success("✅ Content refined successfully!")
+                st.rerun()
+            else:
+                st.error("❌ Failed to refine content")
             
         except Exception as e:
             st.error(f"❌ Error refining content: {str(e)}")
 
-def show_home_page():
-    """Display home page with app overview"""
+def social_media_page():
+    """Social media connections and publishing"""
     
-    st.markdown("""
-    ## 🎯 Welcome to the AI Content Generator
+    st.header("📱 Social Media Integration")
     
-    Transform your social media strategy with AI-powered content generation and refinement.
-    """)
+    social_manager = st.session_state.social_manager
     
-    # Feature overview
-    col1, col2 = st.columns(2)
+    # Platform connections
+    st.subheader("🔗 Platform Connections")
     
-    with col1:
-        st.markdown("""
-        <div class="feature-card">
-            <h3>🤖 AI-Powered Generation</h3>
-            <p>Uses Perplexity's Sonar Reasoning API for research-backed content creation with real-time insights.</p>
-        </div>
-        """, unsafe_allow_html=True)
+    # Display connection UI for each platform
+    platforms = ['bluesky', 'linkedin', 'twitter', 'threads']
+    
+    for platform in platforms:
+        display_platform_connection_ui(social_manager, platform)
+    
+    # Publishing section
+    if st.session_state.generated_content:
+        st.subheader("📤 Publish Content")
         
-        st.markdown("""
-        <div class="feature-card">
-            <h3>🎨 Platform Optimization</h3>
-            <p>Automatically formats content for LinkedIn, Twitter/X, Bluesky, and Threads with optimal character counts.</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown("""
-        <div class="feature-card">
-            <h3>🔄 Iterative Refinement</h3>
-            <p>Human-AI collaboration allows you to refine content until it's perfect for your audience.</p>
-        </div>
-        """, unsafe_allow_html=True)
+        connected_platforms = social_manager.get_connected_platforms()
         
-        st.markdown("""
-        <div class="feature-card">
-            <h3>📊 Analytics Insights</h3>
-            <p>Track performance and get AI-powered recommendations to improve your content strategy.</p>
-        </div>
-        """, unsafe_allow_html=True)
+        if connected_platforms:
+            # Select platforms to publish to
+            selected_for_publishing = st.multiselect(
+                "Select platforms to publish to:",
+                connected_platforms,
+                default=connected_platforms,
+                key="publish_platforms"
+            )
+            
+            if st.button("🚀 Publish to Selected Platforms", type="primary", key="publish_btn"):
+                publish_content_to_platforms(social_manager, selected_for_publishing)
+        else:
+            st.info("🔗 Connect to social media platforms above to enable publishing.")
+    else:
+        st.info("📝 Generate content first to enable publishing.")
+
+def publish_content_to_platforms(social_manager, platforms):
+    """Publish content to selected platforms"""
     
-    # Quick start guide
-    st.markdown("""
-    ## 🚀 Quick Start Guide
+    results = {}
     
-    1. **Add API Key**: Enter your Perplexity API key in the sidebar
-    2. **Generate Content**: Choose a topic and platforms, then click generate
-    3. **Refine**: Use AI to improve your content with specific feedback
-    4. **Connect & Publish**: Link your social accounts and publish directly
-    5. **Analyze**: Track performance and optimize your strategy
-    """)
+    with st.spinner("📤 Publishing content..."):
+        for platform in platforms:
+            if platform in st.session_state.generated_content:
+                content = st.session_state.generated_content[platform]
+                platform_obj = social_manager.get_platform(platform)
+                
+                if platform_obj and platform_obj.is_connected:
+                    success, message = platform_obj.post_content(content)
+                    results[platform] = (success, message)
+                else:
+                    results[platform] = (False, "Platform not connected")
     
-    # Demo section
-    st.markdown("## 🎬 Demo Video")
-    st.markdown("**[🎥 Watch the Complete Demo](https://youtu.be/JRp7JAR7ifo)**")
+    # Display results
+    st.subheader("📊 Publishing Results")
     
-    # Repository link
-    st.markdown("## 💻 Source Code")
-    st.markdown("**[📂 View on GitHub](https://github.com/ashd1710/social-media-content-generator)**")
+    for platform, (success, message) in results.items():
+        if success:
+            st.success(f"✅ {platform.title()}: {message}")
+        else:
+            st.error(f"❌ {platform.title()}: {message}")
 
 def analytics_page():
     """Analytics and insights dashboard"""
     
     st.header("📊 Analytics Dashboard")
     
-    # Sample analytics data
-    sample_data = {
-        'Platform': ['LinkedIn', 'Bluesky', 'Twitter', 'Threads'],
-        'Posts': [15, 23, 31, 12],
-        'Engagement': [245, 189, 156, 78],
-        'Reach': [1250, 890, 1100, 450]
-    }
+    # Get content history
+    content_history = st.session_state.db.get_content_history()
     
-    df = pd.DataFrame(sample_data)
+    if content_history:
+        # Convert to DataFrame for analysis
+        df_data = []
+        for record in content_history:
+            df_data.append({
+                'topic': record[0],
+                'platform': record[1],
+                'content_length': len(record[2]),
+                'created_at': record[4]
+            })
+        
+        df = pd.DataFrame(df_data)
+        
+        # Metrics overview
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Total Content", len(df))
+        with col2:
+            st.metric("Platforms Used", df['platform'].nunique())
+        with col3:
+            st.metric("Topics Covered", df['topic'].nunique())
+        with col4:
+            avg_length = df['content_length'].mean()
+            st.metric("Avg Content Length", f"{avg_length:.0f} chars")
+        
+        # Charts
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Content by platform
+            platform_counts = df['platform'].value_counts()
+            fig_platforms = px.pie(
+                values=platform_counts.values,
+                names=platform_counts.index,
+                title="Content by Platform"
+            )
+            st.plotly_chart(fig_platforms, use_container_width=True)
+        
+        with col2:
+            # Content by topic
+            topic_counts = df['topic'].value_counts().head(10)
+            fig_topics = px.bar(
+                x=topic_counts.values,
+                y=topic_counts.index,
+                orientation='h',
+                title="Top Topics"
+            )
+            st.plotly_chart(fig_topics, use_container_width=True)
+        
+        # Recent content
+        st.subheader("📝 Recent Content")
+        
+        for i, record in enumerate(content_history[:5]):
+            topic, platform, content, metadata, created_at = record
+            
+            with st.expander(f"{platform.title()} - {topic} ({created_at})"):
+                st.write(content[:200] + "..." if len(content) > 200 else content)
     
-    # Metrics overview
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("Total Posts", df['Posts'].sum())
-    with col2:
-        st.metric("Total Engagement", df['Engagement'].sum())
-    with col3:
-        st.metric("Total Reach", df['Reach'].sum())
-    with col4:
-        avg_engagement = df['Engagement'].sum() / df['Posts'].sum()
-        st.metric("Avg Engagement/Post", f"{avg_engagement:.1f}")
-    
-    # Charts
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        # Posts by platform
-        fig_posts = px.bar(df, x='Platform', y='Posts', title='Posts by Platform')
-        st.plotly_chart(fig_posts, use_container_width=True)
-    
-    with col2:
-        # Engagement by platform
-        fig_engagement = px.pie(df, values='Engagement', names='Platform', title='Engagement Distribution')
-        st.plotly_chart(fig_engagement, use_container_width=True)
+    else:
+        st.info("📊 Generate some content to see analytics!")
+        
+        # Sample analytics for demo
+        sample_data = {
+            'Platform': ['LinkedIn', 'Bluesky', 'Twitter', 'Threads'],
+            'Posts': [15, 23, 31, 12],
+            'Engagement': [245, 189, 156, 78]
+        }
+        
+        df = pd.DataFrame(sample_data)
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            fig_posts = px.bar(df, x='Platform', y='Posts', title='Sample: Posts by Platform')
+            st.plotly_chart(fig_posts, use_container_width=True)
+        
+        with col2:
+            fig_engagement = px.pie(df, values='Engagement', names='Platform', title='Sample: Engagement Distribution')
+            st.plotly_chart(fig_engagement, use_container_width=True)
     
     # AI Insights
     st.subheader("🤖 AI-Powered Insights")
@@ -487,36 +559,74 @@ def analytics_page():
         "📈 LinkedIn posts generate 40% higher engagement than other platforms",
         "⏰ Best posting time: 9-11 AM for maximum reach",
         "📝 Trend Analysis content performs 25% better than other types",
-        "🎯 Posts with questions get 60% more comments"
+        "🎯 Posts with questions get 60% more comments",
+        "🔄 Content with refinement gets 30% more engagement"
     ]
     
     for insight in insights:
         st.info(insight)
 
-def social_media_page():
-    """Social media integration page"""
+def home_page():
+    """Home page with app overview"""
     
-    st.header("📱 Social Media Integration")
+    st.markdown("""
+    ## 🎯 Welcome to the AI Content Generator
     
-    st.info("🚧 Social media integration features are available in the full version. This demo focuses on content generation capabilities.")
+    Transform your social media strategy with AI-powered content generation and refinement powered by Perplexity's Sonar Reasoning API.
+    """)
     
-    # Show mockup of social media connections
-    st.subheader("🔗 Platform Connections")
+    # Feature overview
+    col1, col2 = st.columns(2)
     
-    platforms = [
-        {"name": "Bluesky", "icon": "🦋", "status": "Available", "color": "blue"},
-        {"name": "LinkedIn", "icon": "💼", "status": "Available", "color": "blue"},
-        {"name": "Twitter/X", "icon": "🐦", "status": "Premium Tier", "color": "orange"},
-        {"name": "Threads", "icon": "🧵", "status": "Premium Tier", "color": "red"}
-    ]
+    with col1:
+        st.markdown("""
+        <div class="feature-card">
+            <h3>🤖 AI-Powered Research</h3>
+            <p>Uses Perplexity's Sonar Reasoning API for real-time research and chain-of-thought analysis to create well-informed content.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("""
+        <div class="feature-card">
+            <h3>🎨 Platform Optimization</h3>
+            <p>Automatically formats content for LinkedIn, Twitter/X, Bluesky, and Threads with optimal character counts and tone.</p>
+        </div>
+        """, unsafe_allow_html=True)
     
-    for platform in platforms:
-        with st.expander(f"{platform['icon']} {platform['name']} - {platform['status']}"):
-            if platform['status'] == "Available":
-                st.success(f"✅ {platform['name']} integration ready for live posting")
-                st.markdown(f"Connect your {platform['name']} account to enable direct publishing")
-            else:
-                st.warning(f"⚠️ {platform['name']} requires premium API tier")
+    with col2:
+        st.markdown("""
+        <div class="feature-card">
+            <h3>🔄 Iterative Refinement</h3>
+            <p>Human-AI collaboration allows you to refine content until it's perfect for your audience and objectives.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("""
+        <div class="feature-card">
+            <h3>📊 Live Publishing</h3>
+            <p>Connect your social accounts and publish directly with intelligent threading and analytics tracking.</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Quick start guide
+    st.markdown("""
+    ## 🚀 Quick Start Guide
+    
+    1. **🔑 Add API Key**: Enter your Perplexity API key in the sidebar
+    2. **📝 Generate Content**: Choose a topic and platforms, then click generate
+    3. **🔧 Refine**: Use AI to improve your content with specific feedback
+    4. **🔗 Connect & Publish**: Link your social accounts and publish directly
+    5. **📊 Analyze**: Track performance and optimize your strategy
+    """)
+    
+    # Demo section
+    st.markdown("## 🎬 Demo Video")
+    st.markdown("**[🎥 Watch the Complete Demo](https://youtu.be/JRp7JAR7ifo)**")
+    
+    # Get started button
+    if st.button("🚀 Get Started", type="primary", key="get_started_btn"):
+        st.session_state.current_page = "📝 Generate Content"
+        st.rerun()
 
 def main():
     """Main application"""
@@ -527,36 +637,43 @@ def main():
     # Show header
     show_header()
     
-    # Initialize Perplexity client
-    perplexity_client = initialize_perplexity_client()
-    
     # Sidebar navigation
     st.sidebar.title("🧭 Navigation")
-    page = st.sidebar.selectbox("Choose a page:", [
+    
+    # Page selection
+    pages = [
         "🏠 Home",
         "📝 Generate Content", 
         "📱 Social Media",
         "📊 Analytics"
-    ])
+    ]
+    
+    # Get current page from session state or default to Home
+    if 'current_page' not in st.session_state:
+        st.session_state.current_page = "🏠 Home"
+    
+    current_page = st.sidebar.selectbox(
+        "Choose a page:", 
+        pages,
+        index=pages.index(st.session_state.current_page) if st.session_state.current_page in pages else 0,
+        key="page_selector"
+    )
+    
+    st.session_state.current_page = current_page
     
     # API key status in sidebar
+    perplexity_client = initialize_perplexity_client()
     if perplexity_client:
         st.sidebar.success("✅ Perplexity API Connected")
-    else:
-        st.sidebar.warning("⚠️ Perplexity API Key Required")
-        st.sidebar.markdown("Add your API key above to use the content generator.")
     
     # Show different pages based on selection
-    if page == "🏠 Home":
-        show_home_page()
-    elif page == "📝 Generate Content":
-        if perplexity_client:
-            content_generation_page(perplexity_client)
-        else:
-            st.error("Please configure your Perplexity API key to generate content.")
-    elif page == "📱 Social Media":
+    if current_page == "🏠 Home":
+        home_page()
+    elif current_page == "📝 Generate Content":
+        generate_content_page()
+    elif current_page == "📱 Social Media":
         social_media_page()
-    elif page == "📊 Analytics":
+    elif current_page == "📊 Analytics":
         analytics_page()
 
 if __name__ == "__main__":
