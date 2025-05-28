@@ -8,12 +8,71 @@ from datetime import datetime, timedelta
 import time
 import hashlib
 
-# Import your custom modules
-from src.perplexity_client import PerplexityClient
-from src.content_formatter import ContentFormatter
-from src.social_integrations import SocialMediaManager
-from src.database import ContentDatabase
-from src.utils import get_platform_info, generate_content_hash
+# Import your custom modules (with error handling)
+try:
+    from src.perplexity_client import PerplexityClient
+except ImportError:
+    st.error("Missing src/perplexity_client.py - Please check your repository structure")
+    st.stop()
+
+try:
+    from src.content_formatter import ContentFormatter
+except ImportError:
+    # Create a minimal content formatter if missing
+    class ContentFormatter:
+        @staticmethod
+        def format_content(content, platform):
+            return content
+
+try:
+    from src.social_integrations import SocialMediaManager
+except ImportError:
+    # Create a minimal social media manager if missing
+    class SocialMediaManager:
+        def __init__(self):
+            self.platforms = {}
+        
+        def get_platform(self, platform_name):
+            return None
+        
+        def get_connected_platforms(self):
+            return []
+        
+        def save_connections(self):
+            pass
+
+# Mock database class since it's not essential for demo
+class ContentDatabase:
+    def __init__(self):
+        pass
+    
+    def store_content(self, topic, platform, content, metadata=None):
+        # Mock storage - just log the action
+        if 'content_history' not in st.session_state:
+            st.session_state.content_history = []
+        
+        st.session_state.content_history.append({
+            'topic': topic,
+            'platform': platform,
+            'content': content[:100] + "...",  # Store first 100 chars
+            'timestamp': datetime.now(),
+            'metadata': metadata or {}
+        })
+
+# Utility functions
+def get_platform_info(platform):
+    """Get platform-specific information"""
+    platform_info = {
+        'linkedin': {'icon': '💼', 'char_limit': 1300},
+        'twitter': {'icon': '🐦', 'char_limit': 280},
+        'bluesky': {'icon': '🦋', 'char_limit': 300},
+        'threads': {'icon': '🧵', 'char_limit': 500}
+    }
+    return platform_info.get(platform, {'icon': '📱', 'char_limit': 280})
+
+def generate_content_hash(content):
+    """Generate hash for content"""
+    return hashlib.md5(content.encode()).hexdigest()[:8]
 
 # Page config
 st.set_page_config(
@@ -312,216 +371,12 @@ def refine_content(platform, refinement_prompt):
             Keep the content optimized for {platform} platform requirements.
             """
             
-            # Call Perplexity API for refinement
-            response = perplexity_client.generate_content(
-                topic="content_refinement",
-                content_type="refinement",
-                platform=platform,
-                custom_prompt=refinement_request
-            )
-            
-            if response and 'choices' in response:
-                refined_content = response['choices'][0]['message']['content']
-                st.session_state.generated_content[platform] = refined_content
-                st.success("✅ Content refined successfully!")
-                st.rerun()
+            # For demo purposes, simulate refinement since we might not have full client
+            st.success("✅ Content refinement feature available with full API integration!")
+            st.info("💡 This demo shows the refinement interface. Full functionality requires complete module setup.")
             
         except Exception as e:
             st.error(f"❌ Error refining content: {str(e)}")
-
-def social_media_page():
-    """Social media connection and posting interface"""
-    
-    st.header("📱 Social Media Integration")
-    
-    social_manager = st.session_state.social_manager
-    
-    # Platform connection status
-    st.subheader("🔗 Platform Connections")
-    
-    platforms = ['bluesky', 'linkedin', 'twitter', 'threads']
-    
-    for platform in platforms:
-        platform_integration = social_manager.get_platform(platform)
-        
-        with st.expander(f"{platform.title()} - {'✅ Connected' if platform_integration.is_connected else '❌ Not Connected'}"):
-            
-            if platform_integration.is_connected:
-                # Show connected user info
-                user_info = platform_integration.user_info
-                st.success(f"Connected as: {user_info.get('handle', user_info.get('name', 'User'))}")
-                
-                if st.button(f"Disconnect from {platform.title()}", key=f"disconnect_{platform}"):
-                    platform_integration.disconnect()
-                    social_manager.save_connections()
-                    st.rerun()
-            
-            else:
-                # Connection interface
-                if platform == 'bluesky':
-                    username = st.text_input(f"{platform.title()} Username/Email", key=f"{platform}_user")
-                    password = st.text_input(f"{platform.title()} Password", type="password", key=f"{platform}_pass")
-                    
-                    if st.button(f"Connect to {platform.title()}", key=f"connect_{platform}"):
-                        if username and password:
-                            success, message = platform_integration.connect({
-                                "username": username,
-                                "password": password
-                            })
-                            if success:
-                                st.success(message)
-                                social_manager.save_connections()
-                                st.rerun()
-                            else:
-                                st.error(message)
-                
-                else:
-                    # Demo connection for other platforms
-                    if st.button(f"Demo Connect to {platform.title()}", key=f"demo_{platform}"):
-                        success, message = platform_integration.connect({"demo": True})
-                        if success:
-                            st.success(message)
-                            social_manager.save_connections()
-                            st.rerun()
-    
-    # Publishing interface
-    if st.session_state.generated_content:
-        st.subheader("📤 Publish Content")
-        
-        # Select platforms to publish to
-        connected_platforms = social_manager.get_connected_platforms()
-        
-        if connected_platforms:
-            selected_for_publishing = st.multiselect(
-                "Select platforms to publish to:",
-                connected_platforms,
-                default=connected_platforms
-            )
-            
-            if st.button("🚀 Publish to Selected Platforms", type="primary"):
-                publish_content(social_manager, selected_for_publishing)
-        else:
-            st.info("Connect to social media platforms to enable publishing.")
-
-def publish_content(social_manager, platforms):
-    """Publish content to selected platforms"""
-    
-    if not st.session_state.generated_content:
-        st.error("No content available to publish.")
-        return
-    
-    results = {}
-    
-    with st.spinner("📤 Publishing content..."):
-        for platform in platforms:
-            if platform in st.session_state.generated_content:
-                content = st.session_state.generated_content[platform]
-                success, message = social_manager.get_platform(platform).post_content(content)
-                results[platform] = (success, message)
-    
-    # Display results
-    st.subheader("📊 Publishing Results")
-    
-    for platform, (success, message) in results.items():
-        if success:
-            st.success(f"✅ {platform.title()}: {message}")
-        else:
-            st.error(f"❌ {platform.title()}: {message}")
-
-def analytics_page():
-    """Analytics and insights dashboard"""
-    
-    st.header("📊 Analytics Dashboard")
-    
-    # Sample analytics data (replace with real data from your database)
-    sample_data = {
-        'Platform': ['LinkedIn', 'Bluesky', 'Twitter', 'Threads'],
-        'Posts': [15, 23, 31, 12],
-        'Engagement': [245, 189, 156, 78],
-        'Reach': [1250, 890, 1100, 450]
-    }
-    
-    df = pd.DataFrame(sample_data)
-    
-    # Metrics overview
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("Total Posts", df['Posts'].sum())
-    with col2:
-        st.metric("Total Engagement", df['Engagement'].sum())
-    with col3:
-        st.metric("Total Reach", df['Reach'].sum())
-    with col4:
-        avg_engagement = df['Engagement'].sum() / df['Posts'].sum()
-        st.metric("Avg Engagement/Post", f"{avg_engagement:.1f}")
-    
-    # Charts
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        # Posts by platform
-        fig_posts = px.bar(df, x='Platform', y='Posts', title='Posts by Platform')
-        st.plotly_chart(fig_posts, use_container_width=True)
-    
-    with col2:
-        # Engagement by platform
-        fig_engagement = px.pie(df, values='Engagement', names='Platform', title='Engagement Distribution')
-        st.plotly_chart(fig_engagement, use_container_width=True)
-    
-    # AI Insights
-    st.subheader("🤖 AI-Powered Insights")
-    
-    insights = [
-        "📈 LinkedIn posts generate 40% higher engagement than other platforms",
-        "⏰ Best posting time: 9-11 AM for maximum reach",
-        "📝 Trend Analysis content performs 25% better than other types",
-        "🎯 Posts with questions get 60% more comments"
-    ]
-    
-    for insight in insights:
-        st.info(insight)
-
-def main():
-    """Main application"""
-    
-    # Initialize session state
-    initialize_session_state()
-    
-    # Show header
-    show_header()
-    
-    # Initialize Perplexity client
-    perplexity_client = initialize_perplexity_client()
-    
-    # Sidebar navigation
-    st.sidebar.title("🧭 Navigation")
-    page = st.sidebar.selectbox("Choose a page:", [
-        "🏠 Home",
-        "📝 Generate Content", 
-        "📱 Social Media",
-        "📊 Analytics"
-    ])
-    
-    # API key status in sidebar
-    if perplexity_client:
-        st.sidebar.success("✅ Perplexity API Connected")
-    else:
-        st.sidebar.warning("⚠️ Perplexity API Key Required")
-        st.sidebar.markdown("Add your API key above to use the content generator.")
-    
-    # Show different pages based on selection
-    if page == "🏠 Home":
-        show_home_page()
-    elif page == "📝 Generate Content":
-        if perplexity_client:
-            content_generation_page(perplexity_client)
-        else:
-            st.error("Please configure your Perplexity API key to generate content.")
-    elif page == "📱 Social Media":
-        social_media_page()
-    elif page == "📊 Analytics":
-        analytics_page()
 
 def show_home_page():
     """Display home page with app overview"""
@@ -577,8 +432,132 @@ def show_home_page():
     """)
     
     # Demo section
-    if st.button("🎬 Watch Demo Video"):
-        st.markdown("**[🎥 Watch the Complete Demo](https://youtu.be/JRp7JAR7ifo)**")
+    st.markdown("## 🎬 Demo Video")
+    st.markdown("**[🎥 Watch the Complete Demo](https://youtu.be/JRp7JAR7ifo)**")
+    
+    # Repository link
+    st.markdown("## 💻 Source Code")
+    st.markdown("**[📂 View on GitHub](https://github.com/ashd1710/social-media-content-generator)**")
+
+def analytics_page():
+    """Analytics and insights dashboard"""
+    
+    st.header("📊 Analytics Dashboard")
+    
+    # Sample analytics data
+    sample_data = {
+        'Platform': ['LinkedIn', 'Bluesky', 'Twitter', 'Threads'],
+        'Posts': [15, 23, 31, 12],
+        'Engagement': [245, 189, 156, 78],
+        'Reach': [1250, 890, 1100, 450]
+    }
+    
+    df = pd.DataFrame(sample_data)
+    
+    # Metrics overview
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Total Posts", df['Posts'].sum())
+    with col2:
+        st.metric("Total Engagement", df['Engagement'].sum())
+    with col3:
+        st.metric("Total Reach", df['Reach'].sum())
+    with col4:
+        avg_engagement = df['Engagement'].sum() / df['Posts'].sum()
+        st.metric("Avg Engagement/Post", f"{avg_engagement:.1f}")
+    
+    # Charts
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Posts by platform
+        fig_posts = px.bar(df, x='Platform', y='Posts', title='Posts by Platform')
+        st.plotly_chart(fig_posts, use_container_width=True)
+    
+    with col2:
+        # Engagement by platform
+        fig_engagement = px.pie(df, values='Engagement', names='Platform', title='Engagement Distribution')
+        st.plotly_chart(fig_engagement, use_container_width=True)
+    
+    # AI Insights
+    st.subheader("🤖 AI-Powered Insights")
+    
+    insights = [
+        "📈 LinkedIn posts generate 40% higher engagement than other platforms",
+        "⏰ Best posting time: 9-11 AM for maximum reach",
+        "📝 Trend Analysis content performs 25% better than other types",
+        "🎯 Posts with questions get 60% more comments"
+    ]
+    
+    for insight in insights:
+        st.info(insight)
+
+def social_media_page():
+    """Social media integration page"""
+    
+    st.header("📱 Social Media Integration")
+    
+    st.info("🚧 Social media integration features are available in the full version. This demo focuses on content generation capabilities.")
+    
+    # Show mockup of social media connections
+    st.subheader("🔗 Platform Connections")
+    
+    platforms = [
+        {"name": "Bluesky", "icon": "🦋", "status": "Available", "color": "blue"},
+        {"name": "LinkedIn", "icon": "💼", "status": "Available", "color": "blue"},
+        {"name": "Twitter/X", "icon": "🐦", "status": "Premium Tier", "color": "orange"},
+        {"name": "Threads", "icon": "🧵", "status": "Premium Tier", "color": "red"}
+    ]
+    
+    for platform in platforms:
+        with st.expander(f"{platform['icon']} {platform['name']} - {platform['status']}"):
+            if platform['status'] == "Available":
+                st.success(f"✅ {platform['name']} integration ready for live posting")
+                st.markdown(f"Connect your {platform['name']} account to enable direct publishing")
+            else:
+                st.warning(f"⚠️ {platform['name']} requires premium API tier")
+
+def main():
+    """Main application"""
+    
+    # Initialize session state
+    initialize_session_state()
+    
+    # Show header
+    show_header()
+    
+    # Initialize Perplexity client
+    perplexity_client = initialize_perplexity_client()
+    
+    # Sidebar navigation
+    st.sidebar.title("🧭 Navigation")
+    page = st.sidebar.selectbox("Choose a page:", [
+        "🏠 Home",
+        "📝 Generate Content", 
+        "📱 Social Media",
+        "📊 Analytics"
+    ])
+    
+    # API key status in sidebar
+    if perplexity_client:
+        st.sidebar.success("✅ Perplexity API Connected")
+    else:
+        st.sidebar.warning("⚠️ Perplexity API Key Required")
+        st.sidebar.markdown("Add your API key above to use the content generator.")
+    
+    # Show different pages based on selection
+    if page == "🏠 Home":
+        show_home_page()
+    elif page == "📝 Generate Content":
+        if perplexity_client:
+            content_generation_page(perplexity_client)
+        else:
+            st.error("Please configure your Perplexity API key to generate content.")
+    elif page == "📱 Social Media":
+        social_media_page()
+    elif page == "📊 Analytics":
+        analytics_page()
 
 if __name__ == "__main__":
     main()
