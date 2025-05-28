@@ -12,6 +12,20 @@ An intelligent content generator that leverages **Perplexity's Sonar Reasoning A
 
 ---
 
+## 🚀 Live Demo
+
+**[▶️ Try the Live Application](https://social-media-content-generator-kybzupvpcdh8anshiprj5y.streamlit.app)**
+
+*No setup required - fully functional demo with AI content generation powered by Perplexity Sonar API*
+
+**🎯 Quick Demo Guide:**
+1. **Generate Content**: Select "AI in Healthcare" → "Trend Analysis" → Choose platforms
+2. **See AI Research**: Watch Perplexity Sonar API research in real-time  
+3. **Refine Content**: Use "Make more engaging" to see iterative AI collaboration
+4. **Live Posting**: Connect Bluesky to test intelligent threading
+
+---
+
 ## ✨ **Key Features**
 
 ### 🤖 **Advanced AI Content Generation**
